@@ -1,0 +1,64 @@
+services:
+  # ─── Nginx (Frontend + API Proxy) ─────────────────────────
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/frontend.prod.Dockerfile
+    ports:
+      # Открываем наружу порт 80 (HTTP)
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: always
+
+  # ─── Backend (NestJS API) ─────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.prod.Dockerfile
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      # Важно: Замените на домен вашего сервера (например, http://my-cool-site.ru)
+      - "FRONTEND_ORIGIN=*"
+      # Redis — подключение к контейнеру redis по имени сервиса
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    # DNS Google — помогает обойти блокировку api.pwnedpasswords.com
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/api/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ─── Redis: кэш для HIBP-ответов ───────────────────────────
+  redis:
+    image: redis:7-alpine
+    volumes:
+      # Персистентное хранилище — кэш переживает перезапуск контейнера
+      - redis_data:/data
+    # Запускаем Redis с AOF-персистентностью и ограничением памяти
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  redis_data:
